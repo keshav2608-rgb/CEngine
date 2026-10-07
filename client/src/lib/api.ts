@@ -90,7 +90,7 @@ api.interceptors.response.use(
         if (typeof window !== 'undefined') {
           localStorage.removeItem('cengine_access_token');
           localStorage.removeItem('cengine_user');
-          window.location.href = '/login';
+          window.location.replace('/login');
         }
         return Promise.reject(refreshError);
       } finally {

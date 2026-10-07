@@ -1,97 +1,219 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { MessageSquare, Users, Loader2 } from 'lucide-react';
+import { Loader2, Upload, WifiOff } from 'lucide-react';
 import { Sidebar } from '@/components/chat/Sidebar';
 import { ChatHeader } from '@/components/chat/ChatHeader';
 import { MessageList } from '@/components/chat/MessageList';
-import { MessageInput } from '@/components/chat/MessageInput';
+import { MessageInput, FILES_DROPPED_EVENT } from '@/components/chat/MessageInput';
+import { CommandPalette } from '@/components/chat/CommandPalette';
 import { NewChatModal } from '@/components/modals/NewChatModal';
 import { CreateGroupModal } from '@/components/modals/CreateGroupModal';
+import { SettingsModal } from '@/components/modals/SettingsModal';
+import { Button } from '@/components/ui/Button';
 import { useAuth } from '@/lib/auth-context';
 import { useChat } from '@/lib/chat-context';
+import { isMac } from '@/lib/utils';
+import { usePreferences } from '@/lib/preferences';
+import { ScheduledProvider } from '@/lib/scheduled';
+import { WallpaperLayer } from '@/components/chat/Wallpaper';
+import { EncryptionUnavailableBanner } from '@/components/chat/Encryption';
+import { OPEN_ROOM_EVENT, usePwa } from '@/lib/pwa';
 
 export default function ChatDashboardPage() {
+  return (
+    <ScheduledProvider>
+      <ChatDashboard />
+    </ScheduledProvider>
+  );
+}
+
+function ChatDashboard() {
+  const { prefs } = usePreferences();
   const { isAuthenticated, isLoading } = useAuth();
-  const { activeRoom } = useChat();
+  const { activeRoom, rooms, setActiveRoom, connectionState } = useChat();
   const router = useRouter();
 
   const [isNewChatOpen, setIsNewChatOpen] = useState(false);
   const [isCreateGroupOpen, setIsCreateGroupOpen] = useState(false);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isPaletteOpen, setIsPaletteOpen] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
+  const dragDepth = useRef(0);
 
   useEffect(() => {
-    if (!isLoading && !isAuthenticated) {
-      router.replace('/login');
-    }
+    if (!isLoading && !isAuthenticated) router.replace('/login');
   }, [isAuthenticated, isLoading, router]);
+
+  const openNewChat = useCallback(() => setIsNewChatOpen(true), []);
+  const { syncPush } = usePwa();
+
+  // Open a conversation from a notification click or a ?room= link; ?action=new from the app shortcut
+  const pendingRoomRef = useRef<string | null>(null);
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    pendingRoomRef.current = params.get('room');
+    if (params.get('action') === 'new') queueMicrotask(() => setIsNewChatOpen(true));
+    if (params.has('room') || params.has('action')) window.history.replaceState(null, '', '/chat');
+    const onOpen = (e: Event) => {
+      pendingRoomRef.current = (e as CustomEvent<string>).detail;
+      const room = rooms.find((r) => r.id === pendingRoomRef.current);
+      if (room) {
+        setActiveRoom(room);
+        pendingRoomRef.current = null;
+      }
+    };
+    window.addEventListener(OPEN_ROOM_EVENT, onOpen);
+    return () => window.removeEventListener(OPEN_ROOM_EVENT, onOpen);
+    // Only on mount; rooms are handled by the effect below
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  useEffect(() => {
+    const id = pendingRoomRef.current;
+    if (!id) return;
+    const room = rooms.find((r) => r.id === id);
+    if (room) {
+      pendingRoomRef.current = null;
+      setActiveRoom(room);
+    }
+  }, [rooms, setActiveRoom]);
+
+  // Keep this device's push subscription (and its muted chats) in sync with the server
+  const mutedKey = prefs.mutedRooms.join(',');
+  useEffect(() => {
+    if (isAuthenticated && prefs.desktopNotifications)
+      syncPush(mutedKey ? mutedKey.split(',') : []);
+  }, [isAuthenticated, prefs.desktopNotifications, mutedKey, syncPush]);
+  const openNewGroup = useCallback(() => setIsCreateGroupOpen(true), []);
+
+  // Global keyboard shortcuts
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setIsPaletteOpen((open) => !open);
+        return;
+      }
+      if (e.altKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown') && rooms.length) {
+        e.preventDefault();
+        const idx = rooms.findIndex((r) => r.id === activeRoom?.id);
+        if (e.shiftKey) {
+          // Next unread conversation
+          const next = rooms.find((r, i) => r.unreadCount > 0 && i !== idx);
+          if (next) setActiveRoom(next);
+          return;
+        }
+        const step = e.key === 'ArrowDown' ? 1 : -1;
+        const nextIdx = idx === -1 ? 0 : (idx + step + rooms.length) % rooms.length;
+        setActiveRoom(rooms[nextIdx]);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [rooms, activeRoom?.id, setActiveRoom]);
 
   if (isLoading || !isAuthenticated) {
     return (
-      <div className="flex-1 flex flex-col items-center justify-center min-h-screen bg-neutral-50 dark:bg-neutral-950">
-        <Loader2 className="w-8 h-8 text-blue-600 animate-spin mb-3" />
-        <span className="text-xs font-medium text-neutral-500">Connecting to CEngine...</span>
+      <div className="flex-1 flex items-center justify-center min-h-screen">
+        <Loader2 className="w-5 h-5 text-subtle animate-spin" aria-label="Loading" />
       </div>
     );
   }
 
+  const hasFiles = (e: React.DragEvent) => Array.from(e.dataTransfer.types).includes('Files');
+
   return (
-    <div className="flex-1 flex h-screen w-screen overflow-hidden bg-white dark:bg-neutral-950">
-      {/* Sidebar: Always visible on desktop; on mobile, only visible when no activeRoom */}
-      <div
-        className={`${
-          activeRoom ? 'hidden md:flex' : 'flex'
-        } w-full md:w-auto h-full flex-shrink-0`}
-      >
-        <Sidebar />
+    <div className="flex-1 flex h-dvh w-full overflow-hidden">
+      <div className={`${activeRoom ? 'hidden md:flex' : 'flex'} w-full md:w-auto h-full shrink-0`}>
+        <Sidebar
+          onNewChat={openNewChat}
+          onNewGroup={openNewGroup}
+          onOpenSettings={() => setIsSettingsOpen(true)}
+          onOpenSearch={() => setIsPaletteOpen(true)}
+        />
       </div>
 
-      {/* Main Chat Area: On mobile, only visible when activeRoom is selected */}
       <main
-        className={`${
-          activeRoom ? 'flex' : 'hidden md:flex'
-        } flex-1 flex-col h-full overflow-hidden bg-neutral-50 dark:bg-neutral-950`}
+        className={`${activeRoom ? 'flex' : 'hidden md:flex'} relative flex-1 min-w-0 flex-col h-full bg-app`}
+        onDragEnter={(e) => {
+          if (!activeRoom || !hasFiles(e)) return;
+          dragDepth.current += 1;
+          setIsDragging(true);
+        }}
+        onDragOver={(e) => activeRoom && hasFiles(e) && e.preventDefault()}
+        onDragLeave={() => {
+          dragDepth.current = Math.max(0, dragDepth.current - 1);
+          if (dragDepth.current === 0) setIsDragging(false);
+        }}
+        onDrop={(e) => {
+          if (!activeRoom || !hasFiles(e)) return;
+          e.preventDefault();
+          dragDepth.current = 0;
+          setIsDragging(false);
+          window.dispatchEvent(
+            new CustomEvent(FILES_DROPPED_EVENT, { detail: Array.from(e.dataTransfer.files) })
+          );
+        }}
       >
-        {activeRoom ? (
-          <div className="flex flex-col h-full">
-            <ChatHeader />
-            <MessageList />
-            <MessageInput />
+        {connectionState === 'offline' && (
+          <div
+            role="status"
+            className="shrink-0 flex items-center justify-center gap-2 h-8 bg-warning-soft text-warning text-[13px] border-b border-line"
+          >
+            <WifiOff className="w-3.5 h-3.5" />
+            Connection lost. Reconnecting… Messages you send will go out once you&apos;re back
+            online.
           </div>
+        )}
+
+        <EncryptionUnavailableBanner />
+
+        {activeRoom ? (
+          <>
+            <ChatHeader />
+            <div className="relative flex-1 min-h-0 flex flex-col">
+              <WallpaperLayer value={prefs.roomWallpapers[activeRoom.id] ?? prefs.wallpaper} />
+              <MessageList />
+              <MessageInput />
+            </div>
+          </>
         ) : (
-          /* Empty Chat Area on Desktop */
-          <div className="hidden md:flex flex-1 flex-col items-center justify-center text-center p-8 select-none">
-            <div className="w-16 h-16 rounded-3xl bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 flex items-center justify-center mb-4 shadow-sm">
-              <MessageSquare className="w-8 h-8" />
-            </div>
-            <h2 className="text-xl font-bold text-neutral-900 dark:text-neutral-100">
-              Welcome to CEngine
+          <div className="flex-1 flex flex-col items-center justify-center text-center p-8">
+            <h2 className="text-base font-semibold text-fg">
+              {rooms.length ? 'Select a conversation' : 'Start your first conversation'}
             </h2>
-            <p className="text-xs text-neutral-500 dark:text-neutral-400 max-w-sm mt-1 mb-6">
-              Select a conversation from the left to start chatting, or start a new 1:1 conversation or group.
+            <p className="text-[13px] text-muted max-w-xs mt-1 mb-5">
+              {rooms.length
+                ? `Pick one from the list, or press ${isMac ? '⌘' : 'Ctrl'}+K to jump to any conversation.`
+                : 'Message someone directly or create a group for your team.'}
             </p>
-            <div className="flex items-center space-x-3">
-              <button
-                onClick={() => setIsNewChatOpen(true)}
-                className="flex items-center space-x-2 px-4 py-2.5 rounded-xl bg-blue-600 text-white text-xs font-medium hover:bg-blue-700 transition-colors shadow-sm"
-              >
-                <MessageSquare className="w-4 h-4" />
-                <span>New Direct Chat</span>
-              </button>
-              <button
-                onClick={() => setIsCreateGroupOpen(true)}
-                className="flex items-center space-x-2 px-4 py-2.5 rounded-xl border border-neutral-200 dark:border-neutral-700 text-neutral-800 dark:text-neutral-200 text-xs font-medium hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors"
-              >
-                <Users className="w-4 h-4" />
-                <span>Create Group</span>
-              </button>
+            <div className="flex gap-2">
+              <Button onClick={openNewChat}>New message</Button>
+              <Button variant="secondary" onClick={openNewGroup}>
+                New group
+              </Button>
             </div>
+          </div>
+        )}
+
+        {isDragging && (
+          <div className="absolute inset-3 z-20 rounded-xl border-2 border-dashed border-accent bg-accent-soft/90 flex flex-col items-center justify-center gap-2 pointer-events-none">
+            <Upload className="w-6 h-6 text-accent" />
+            <p className="text-sm font-medium text-accent-soft-fg">Drop files to attach</p>
           </div>
         )}
       </main>
 
       <NewChatModal isOpen={isNewChatOpen} onClose={() => setIsNewChatOpen(false)} />
       <CreateGroupModal isOpen={isCreateGroupOpen} onClose={() => setIsCreateGroupOpen(false)} />
+      <SettingsModal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} />
+      <CommandPalette
+        isOpen={isPaletteOpen}
+        onClose={() => setIsPaletteOpen(false)}
+        onNewChat={openNewChat}
+        onNewGroup={openNewGroup}
+      />
     </div>
   );
 }

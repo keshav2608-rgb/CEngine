@@ -1,7 +1,11 @@
+import { Prisma } from '@prisma/client';
 import { prisma } from '../db/prisma.js';
 import { AppError } from '../utils/errors.js';
 import { sanitizeInput } from '../utils/sanitize.js';
 import { UserService } from './user.service.js';
+import { parseEnvelope } from '../utils/e2ee.js';
+import { PushService } from './push.service.js';
+import { config } from '../config/index.js';
 
 export interface CreateAttachmentInput {
   fileUrl: string;
@@ -11,6 +15,31 @@ export interface CreateAttachmentInput {
   width?: number;
   height?: number;
 }
+
+const MESSAGE_INCLUDE = {
+  sender: {
+    select: {
+      id: true,
+      displayName: true,
+      avatarUrl: true,
+    },
+  },
+  replyTo: {
+    select: {
+      id: true,
+      content: true,
+      e2ee: true,
+      isDeleted: true,
+      sender: {
+        select: {
+          id: true,
+          displayName: true,
+        },
+      },
+    },
+  },
+  attachments: true,
+} satisfies Prisma.MessageInclude;
 
 export class MessageService {
   /**
@@ -25,6 +54,8 @@ export class MessageService {
       replyToId?: string;
       attachments?: CreateAttachmentInput[];
       metadata?: Record<string, unknown>;
+      /** End-to-end encrypted payload; when present, plaintext content is ignored. */
+      e2ee?: unknown;
     }
   ) {
     // 1. Verify membership
@@ -48,10 +79,30 @@ export class MessageService {
       }
     }
 
-    const cleanContent = data.content ? sanitizeInput(data.content) : '';
-    const hasAttachments = data.attachments && data.attachments.length > 0;
+    // Idempotency: a client retrying after a dropped connection resends the same clientId.
+    // Return the stored message (flagged isDuplicate so callers don't broadcast it again).
+    const clientId =
+      typeof data.metadata?.clientId === 'string' ? data.metadata.clientId.slice(0, 100) : undefined;
+    const findExisting = async () =>
+      clientId
+        ? prisma.message.findUnique({
+            where: { senderId_clientId: { senderId, clientId } },
+            include: { ...MESSAGE_INCLUDE, receipts: true },
+          })
+        : null;
+    const existing = await findExisting();
+    if (existing) return { ...existing, isDuplicate: true };
 
-    if (!cleanContent && !hasAttachments) {
+    const envelope = parseEnvelope(data.e2ee);
+    // All user messages are end-to-end encrypted: plaintext is only accepted for
+    // server-generated SYSTEM messages (clients can't choose the message type).
+    if (!envelope && data.messageType !== 'SYSTEM') {
+      throw new AppError('Messages must be end-to-end encrypted. Please update or reload the app.', 400);
+    }
+    const cleanContent = envelope ? '' : data.content ? sanitizeInput(data.content) : '';
+    const hasAttachments = !envelope && !!data.attachments && data.attachments.length > 0;
+
+    if (!envelope && !cleanContent && !hasAttachments) {
       throw new AppError('Message cannot be empty.', 400);
     }
 
@@ -66,50 +117,41 @@ export class MessageService {
     }
 
     // 4. Create message in database
-    const message = await prisma.message.create({
-      data: {
-        roomId,
-        senderId,
-        content: cleanContent,
-        messageType: data.messageType || (hasAttachments ? 'IMAGE' : 'TEXT'),
-        replyToId: data.replyToId,
-        metadata: data.metadata ? (data.metadata as object) : undefined,
-        attachments: hasAttachments
-          ? {
-              create: data.attachments!.map((att) => ({
-                fileUrl: att.fileUrl,
-                fileName: sanitizeInput(att.fileName),
-                fileSize: att.fileSize,
-                mimeType: att.mimeType,
-                width: att.width,
-                height: att.height,
-              })),
-            }
-          : undefined,
-      },
-      include: {
-        sender: {
-          select: {
-            id: true,
-            displayName: true,
-            avatarUrl: true,
-          },
+    let message;
+    try {
+      message = await prisma.message.create({
+        data: {
+          roomId,
+          senderId,
+          clientId,
+          content: envelope ? null : cleanContent,
+          e2ee: envelope ?? undefined,
+          messageType: data.messageType || (hasAttachments ? 'IMAGE' : 'TEXT'),
+          replyToId: data.replyToId,
+          metadata: data.metadata ? (data.metadata as object) : undefined,
+          attachments: hasAttachments
+            ? {
+                create: data.attachments!.map((att) => ({
+                  fileUrl: att.fileUrl,
+                  fileName: sanitizeInput(att.fileName),
+                  fileSize: att.fileSize,
+                  mimeType: att.mimeType,
+                  width: att.width,
+                  height: att.height,
+                })),
+              }
+            : undefined,
         },
-        replyTo: {
-          select: {
-            id: true,
-            content: true,
-            sender: {
-              select: {
-                id: true,
-                displayName: true,
-              },
-            },
-          },
-        },
-        attachments: true,
-      },
-    });
+        include: MESSAGE_INCLUDE,
+      });
+    } catch (err) {
+      // A concurrent retry with the same clientId won the race: return that message
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+        const raced = await findExisting();
+        if (raced) return { ...raced, isDuplicate: true };
+      }
+      throw err;
+    }
 
     // 5. Create initial receipts for all other members (SENT status)
     const otherMembers = membership.room.members.filter((m) => m.userId !== senderId);
@@ -129,6 +171,16 @@ export class MessageService {
       data: { updatedAt: new Date() },
     });
 
+    // Push to members who aren't connected (no message content is included)
+    PushService.notifyNewMessage({
+      roomId,
+      roomName: membership.room.name,
+      isGroup: membership.room.isGroup,
+      senderId,
+      senderName: message.sender.displayName,
+      memberIds: membership.room.members.map((m) => m.userId),
+    }).catch((err) => console.error('Push notify failed:', err));
+
     // Fetch receipts for response
     const receipts = await prisma.messageReceipt.findMany({
       where: { messageId: message.id },
@@ -137,6 +189,7 @@ export class MessageService {
     return {
       ...message,
       receipts,
+      isDuplicate: false,
     };
   }
 
@@ -171,29 +224,7 @@ export class MessageService {
           }
         : {}),
       orderBy: { createdAt: 'desc' },
-      include: {
-        sender: {
-          select: {
-            id: true,
-            displayName: true,
-            avatarUrl: true,
-          },
-        },
-        replyTo: {
-          select: {
-            id: true,
-            content: true,
-            sender: {
-              select: {
-                id: true,
-                displayName: true,
-              },
-            },
-          },
-        },
-        attachments: true,
-        receipts: true,
-      },
+      include: { ...MESSAGE_INCLUDE, receipts: true },
     });
 
     const hasMore = messages.length > take;
@@ -210,7 +241,11 @@ export class MessageService {
   /**
    * Edit a sent message
    */
-  static async editMessage(messageId: string, userId: string, newContent: string) {
+  static async editMessage(
+    messageId: string,
+    userId: string,
+    edit: { content?: string; e2ee?: unknown }
+  ) {
     const message = await prisma.message.findUnique({
       where: { id: messageId },
     });
@@ -227,40 +262,28 @@ export class MessageService {
       throw new AppError('Cannot edit a deleted message.', 400);
     }
 
-    const cleanContent = sanitizeInput(newContent.trim());
-    if (!cleanContent) {
-      throw new AppError('Message content cannot be empty.', 400);
+    const windowMs = config.messageEditWindowMinutes * 60 * 1000;
+    if (Date.now() - message.createdAt.getTime() > windowMs) {
+      throw new AppError(
+        `Messages can only be edited within ${config.messageEditWindowMinutes} minutes of sending.`,
+        403
+      );
     }
+
+    const envelope = parseEnvelope(edit.e2ee);
+    if (!envelope) {
+      throw new AppError('Edits must be end-to-end encrypted. Please update or reload the app.', 400);
+    }
+    const cleanContent = null;
 
     const updated = await prisma.message.update({
       where: { id: messageId },
       data: {
         content: cleanContent,
+        e2ee: envelope ?? undefined,
         isEdited: true,
       },
-      include: {
-        sender: {
-          select: {
-            id: true,
-            displayName: true,
-            avatarUrl: true,
-          },
-        },
-        replyTo: {
-          select: {
-            id: true,
-            content: true,
-            sender: {
-              select: {
-                id: true,
-                displayName: true,
-              },
-            },
-          },
-        },
-        attachments: true,
-        receipts: true,
-      },
+      include: { ...MESSAGE_INCLUDE, receipts: true },
     });
 
     return updated;
@@ -300,6 +323,7 @@ export class MessageService {
       data: {
         isDeleted: true,
         content: 'This message was deleted',
+        e2ee: Prisma.DbNull,
       },
       include: {
         sender: {
@@ -319,19 +343,40 @@ export class MessageService {
   /**
    * Mark messages as DELIVERED for a user
    */
-  static async markDelivered(userId: string, messageIds: string[]) {
-    if (!messageIds || messageIds.length === 0) return;
+  /**
+   * Mark this user's SENT receipts as DELIVERED. Pass messageIds to limit it to specific
+   * messages, or omit them to catch up on everything sent while the user was offline.
+   * Returns the updated message ids grouped by room so callers can notify senders.
+   */
+  static async markDelivered(
+    userId: string,
+    messageIds?: string[]
+  ): Promise<{ roomId: string; messageIds: string[] }[]> {
+    if (messageIds && messageIds.length === 0) return [];
 
-    await prisma.messageReceipt.updateMany({
+    const pending = await prisma.messageReceipt.findMany({
       where: {
         userId,
-        messageId: { in: messageIds },
         status: 'SENT',
+        ...(messageIds ? { messageId: { in: messageIds } } : {}),
       },
-      data: {
-        status: 'DELIVERED',
-      },
+      select: { messageId: true, message: { select: { roomId: true } } },
+      take: 1000,
     });
+    if (pending.length === 0) return [];
+
+    await prisma.messageReceipt.updateMany({
+      where: { userId, status: 'SENT', messageId: { in: pending.map((r) => r.messageId) } },
+      data: { status: 'DELIVERED' },
+    });
+
+    const byRoom = new Map<string, string[]>();
+    for (const r of pending) {
+      const ids = byRoom.get(r.message.roomId) ?? [];
+      ids.push(r.messageId);
+      byRoom.set(r.message.roomId, ids);
+    }
+    return [...byRoom].map(([roomId, ids]) => ({ roomId, messageIds: ids }));
   }
 
   /**

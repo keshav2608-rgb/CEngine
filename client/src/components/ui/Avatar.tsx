@@ -1,7 +1,7 @@
 'use client';
 
-import React from 'react';
-import { getInitials, cn } from '@/lib/utils';
+import React, { useState } from 'react';
+import { getInitials, cn, resolveFileUrl } from '@/lib/utils';
 
 interface AvatarProps {
   src?: string | null;
@@ -13,20 +13,36 @@ interface AvatarProps {
 }
 
 const sizeClasses = {
-  xs: 'w-7 h-7 text-xs',
-  sm: 'w-9 h-9 text-xs',
-  md: 'w-11 h-11 text-sm',
+  xs: 'w-6 h-6 text-[10px]',
+  sm: 'w-8 h-8 text-[11px]',
+  md: 'w-10 h-10 text-[13px]',
   lg: 'w-14 h-14 text-base',
-  xl: 'w-20 h-20 text-xl font-semibold',
+  xl: 'w-20 h-20 text-xl',
 };
 
 const badgeSizeClasses = {
-  xs: 'w-2 h-2 bottom-0 right-0',
-  sm: 'w-2.5 h-2.5 bottom-0 right-0',
-  md: 'w-3 h-3 bottom-0.5 right-0.5 ring-2 ring-white dark:ring-neutral-900',
-  lg: 'w-3.5 h-3.5 bottom-0.5 right-0.5 ring-2 ring-white dark:ring-neutral-900',
-  xl: 'w-4 h-4 bottom-1 right-1 ring-2 ring-white dark:ring-neutral-900',
+  xs: 'w-2 h-2',
+  sm: 'w-2.5 h-2.5',
+  md: 'w-3 h-3',
+  lg: 'w-3.5 h-3.5',
+  xl: 'w-4 h-4',
 };
+
+// Muted, readable tints rather than saturated primaries
+const palette = [
+  'bg-[#dfe6fb] text-[#2b44a3] dark:bg-[#2a3358] dark:text-[#b9c7f8]',
+  'bg-[#dcefe5] text-[#1d6b45] dark:bg-[#1f3a2d] dark:text-[#9fd8b8]',
+  'bg-[#f6e5d6] text-[#8a4a12] dark:bg-[#40301f] dark:text-[#ebc49b]',
+  'bg-[#eadff6] text-[#5b3492] dark:bg-[#352a48] dark:text-[#cdb5ef]',
+  'bg-[#f6dfe3] text-[#9b2c41] dark:bg-[#432630] dark:text-[#f0b2bf]',
+  'bg-[#d9eef2] text-[#1c6372] dark:bg-[#1e3a40] dark:text-[#9fd3de]',
+];
+
+function hash(value: string): number {
+  let h = 0;
+  for (let i = 0; i < value.length; i++) h = (h * 31 + value.charCodeAt(i)) >>> 0;
+  return h;
+}
 
 export function Avatar({
   src,
@@ -36,54 +52,42 @@ export function Avatar({
   showPresence = false,
   className,
 }: AvatarProps) {
-  const initials = getInitials(name);
-
-  // Consistent background color based on name hash
-  const colors = [
-    'bg-blue-600',
-    'bg-indigo-600',
-    'bg-emerald-600',
-    'bg-violet-600',
-    'bg-rose-600',
-    'bg-amber-600',
-    'bg-cyan-600',
-  ];
-  const charCode = name ? name.charCodeAt(0) + (name.charCodeAt(name.length - 1) || 0) : 0;
-  const bgColor = colors[charCode % colors.length];
+  // Remember which src failed so a new src gets a fresh attempt
+  const [failedSrc, setFailedSrc] = useState<string | null>(null);
+  const showImage = src && failedSrc !== src;
 
   return (
-    <div className={cn('relative inline-flex flex-shrink-0', className)}>
+    <div className={cn('relative inline-flex shrink-0', className)}>
       <div
         className={cn(
-          'rounded-full flex items-center justify-center font-medium overflow-hidden select-none',
+          'rounded-full flex items-center justify-center font-semibold overflow-hidden select-none',
           sizeClasses[size],
-          src ? 'bg-neutral-200 dark:bg-neutral-800' : `${bgColor} text-white`
+          showImage ? 'bg-surface-3' : palette[hash(name || '?') % palette.length]
         )}
+        aria-hidden
       >
-        {src ? (
+        {showImage ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
-            src={src}
-            alt={name || 'Avatar'}
+            src={resolveFileUrl(src)}
+            alt=""
             className="w-full h-full object-cover"
-            onError={(e) => {
-              // Fallback to initials if image load fails
-              (e.currentTarget as HTMLElement).style.display = 'none';
-            }}
+            onError={() => setFailedSrc(src)}
           />
         ) : (
-          <span>{initials}</span>
+          <span>{getInitials(name)}</span>
         )}
       </div>
 
       {showPresence && (
         <span
           className={cn(
-            'absolute rounded-full transition-colors duration-200',
+            'absolute bottom-0 right-0 rounded-full ring-2 ring-surface',
             badgeSizeClasses[size],
-            isOnline ? 'bg-emerald-500' : 'bg-neutral-400 dark:bg-neutral-600'
+            isOnline ? 'bg-success' : 'bg-subtle'
           )}
-          title={isOnline ? 'Online' : 'Offline'}
+          aria-label={isOnline ? 'Online' : 'Offline'}
+          role="img"
         />
       )}
     </div>

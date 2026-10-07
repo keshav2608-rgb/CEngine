@@ -32,6 +32,10 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+# Only public URLs live in these two, so they are committed
+!.env.development
+!.env.production
+!.env.example
 
 # vercel
 .vercel

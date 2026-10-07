@@ -1,20 +1,15 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { Search, Loader2 } from 'lucide-react';
 import { Modal } from '@/components/ui/Modal';
 import { Avatar } from '@/components/ui/Avatar';
-import { api } from '@/lib/api';
+import { Input } from '@/components/ui/Input';
+import { useToast } from '@/components/ui/Toast';
 import { useChat } from '@/lib/chat-context';
-
-interface UserResult {
-  id: string;
-  email: string;
-  displayName: string;
-  avatarUrl: string | null;
-  status: string;
-  isOnline: boolean;
-}
+import { useAuth } from '@/lib/auth-context';
+import { getErrorMessage } from '@/lib/utils';
+import { useUserSearch } from './UserSearch';
 
 interface NewChatModalProps {
   isOpen: boolean;
@@ -22,109 +17,146 @@ interface NewChatModalProps {
 }
 
 export function NewChatModal({ isOpen, onClose }: NewChatModalProps) {
-  const [query, setQuery] = useState('');
-  const [results, setResults] = useState<UserResult[]>([]);
-  const [isSearching, setIsSearching] = useState(false);
-  const [isCreating, setIsCreating] = useState(false);
-  const { createDirectChat } = useChat();
+  return (
+    <Modal isOpen={isOpen} onClose={onClose} title="New message" maxWidth="md">
+      <NewChatContent onClose={onClose} />
+    </Modal>
+  );
+}
 
-  useEffect(() => {
-    if (!query.trim()) {
-      setResults([]);
+/** Mounted only while the dialog is open, so its state starts fresh each time. */
+function NewChatContent({ onClose }: { onClose: () => void }) {
+  const { user } = useAuth();
+  const { rooms, createDirectChat, setActiveRoom, onlineMap } = useChat();
+  const { toast } = useToast();
+  const [query, setQuery] = useState('');
+  const [creatingId, setCreatingId] = useState<string | null>(null);
+  const { results, isSearching, error } = useUserSearch(query);
+
+  // Existing direct conversations, most recent first, shown before the user types
+  const recent = rooms
+    .filter((r) => !r.isGroup)
+    .slice(0, 6)
+    .map((r) => ({ room: r, peer: r.members.find((m) => m.userId !== user?.id) }))
+    .filter((x) => x.peer);
+
+  const start = async (targetUserId: string) => {
+    const existing = rooms.find(
+      (r) => !r.isGroup && r.members.some((m) => m.userId === targetUserId)
+    );
+    if (existing) {
+      setActiveRoom(existing);
+      onClose();
       return;
     }
-
-    const timer = setTimeout(async () => {
-      try {
-        setIsSearching(true);
-        const res = await api.get(`/users/search?q=${encodeURIComponent(query)}`);
-        if (res.data?.data) {
-          setResults(res.data.data);
-        }
-      } catch (err) {
-        console.error('Error searching users:', err);
-      } finally {
-        setIsSearching(false);
-      }
-    }, 300);
-
-    return () => clearTimeout(timer);
-  }, [query]);
-
-  const handleSelectUser = async (targetUserId: string) => {
     try {
-      setIsCreating(true);
+      setCreatingId(targetUserId);
       await createDirectChat(targetUserId);
       onClose();
     } catch (err) {
-      console.error('Failed to create direct chat:', err);
+      toast(getErrorMessage(err, "Couldn't start the conversation"), { tone: 'error' });
     } finally {
-      setIsCreating(false);
+      setCreatingId(null);
     }
   };
 
-  return (
-    <Modal isOpen={isOpen} onClose={onClose} title="Start a New Conversation">
-      <div className="space-y-4">
-        <div className="relative">
-          <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-neutral-400" />
-          <input
-            type="text"
-            placeholder="Search by name or email..."
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            autoFocus
-            className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-neutral-200 dark:border-neutral-700 bg-neutral-50 dark:bg-neutral-800/60 text-sm focus:outline-hidden focus:ring-2 focus:ring-blue-500 transition-all text-neutral-900 dark:text-neutral-100"
-          />
-        </div>
+  const q = query.trim();
 
-        <div className="min-h-[220px] max-h-[300px] overflow-y-auto divide-y divide-neutral-100 dark:divide-neutral-800">
-          {isSearching ? (
-            <div className="flex flex-col items-center justify-center py-10 text-neutral-400">
-              <Loader2 className="w-6 h-6 animate-spin mb-2" />
-              <span className="text-xs">Searching users...</span>
-            </div>
-          ) : results.length > 0 ? (
-            results.map((u) => (
-              <button
-                key={u.id}
-                onClick={() => handleSelectUser(u.id)}
-                disabled={isCreating}
-                className="w-full flex items-center justify-between p-3 rounded-xl hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors text-left"
-              >
-                <div className="flex items-center space-x-3">
-                  <Avatar
-                    src={u.avatarUrl}
-                    name={u.displayName}
-                    size="md"
-                    showPresence
-                    isOnline={u.isOnline}
-                  />
-                  <div>
-                    <h4 className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
-                      {u.displayName}
-                    </h4>
-                    <p className="text-xs text-neutral-500 dark:text-neutral-400">
-                      {u.status || u.email}
-                    </p>
-                  </div>
-                </div>
-                <span className="text-xs font-medium text-blue-600 dark:text-blue-400">
-                  Message
-                </span>
-              </button>
-            ))
-          ) : query.trim() ? (
-            <div className="text-center py-10 text-neutral-400 text-sm">
-              No users found matching &ldquo;{query}&rdquo;
-            </div>
-          ) : (
-            <div className="text-center py-10 text-neutral-400 text-sm">
-              Type a name or email address to start chatting.
-            </div>
-          )}
-        </div>
+  return (
+    <>
+      <div className="relative">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-subtle" />
+        <Input
+          placeholder="Search by name or email"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          className="pl-9"
+          aria-label="Search people"
+          autoFocus
+        />
       </div>
-    </Modal>
+
+      <div className="mt-3 min-h-[240px] max-h-[340px] overflow-y-auto -mx-2">
+        {!q ? (
+          recent.length > 0 ? (
+            <>
+              <p className="px-2 pb-1 text-[12px] font-medium text-subtle">Recent</p>
+              {recent.map(({ room, peer }) => (
+                <PersonRow
+                  key={room.id}
+                  name={peer!.user.displayName}
+                  sub={peer!.user.status}
+                  avatarUrl={peer!.user.avatarUrl}
+                  isOnline={onlineMap[peer!.userId] ?? peer!.user.isOnline}
+                  onClick={() => start(peer!.userId)}
+                />
+              ))}
+            </>
+          ) : (
+            <p className="px-2 py-10 text-center text-[13px] text-muted">
+              Search for people by name or email address.
+            </p>
+          )
+        ) : isSearching && results.length === 0 ? (
+          <div className="flex justify-center py-10 text-subtle">
+            <Loader2 className="w-5 h-5 animate-spin" aria-label="Searching" />
+          </div>
+        ) : error ? (
+          <p className="px-2 py-10 text-center text-[13px] text-danger">
+            Search failed. Check your connection and try again.
+          </p>
+        ) : results.length > 0 ? (
+          results.map((u) => (
+            <PersonRow
+              key={u.id}
+              name={u.displayName}
+              sub={u.email}
+              avatarUrl={u.avatarUrl}
+              isOnline={onlineMap[u.id] ?? u.isOnline}
+              loading={creatingId === u.id}
+              disabled={!!creatingId}
+              onClick={() => start(u.id)}
+            />
+          ))
+        ) : (
+          <p className="px-2 py-10 text-center text-[13px] text-muted">
+            No one found for &ldquo;{q}&rdquo;. Check the spelling, or try their full email address.
+          </p>
+        )}
+      </div>
+    </>
+  );
+}
+
+function PersonRow({
+  name,
+  sub,
+  avatarUrl,
+  isOnline,
+  loading,
+  disabled,
+  onClick,
+}: {
+  name: string;
+  sub?: string;
+  avatarUrl: string | null;
+  isOnline?: boolean;
+  loading?: boolean;
+  disabled?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      className="w-full flex items-center gap-3 px-2 py-2 rounded-md hover:bg-surface-2 text-left disabled:opacity-60"
+    >
+      <Avatar src={avatarUrl} name={name} size="md" showPresence isOnline={isOnline} />
+      <span className="flex-1 min-w-0">
+        <span className="block text-sm font-medium text-fg truncate">{name}</span>
+        {sub && <span className="block text-[13px] text-muted truncate">{sub}</span>}
+      </span>
+      {loading && <Loader2 className="w-4 h-4 animate-spin text-subtle" />}
+    </button>
   );
 }

@@ -1,18 +1,22 @@
 'use client';
 
-import React, { useState, Suspense } from 'react';
+import React, { Suspense, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { Users, Loader2, ArrowRight } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
 import { useAuth } from '@/lib/auth-context';
 import { useChat } from '@/lib/chat-context';
 import { api } from '@/lib/api';
+import { AuthShell } from '@/components/ui/AuthShell';
+import { Alert } from '@/components/ui/Input';
+import { Button, buttonClass } from '@/components/ui/Button';
+import { getErrorMessage } from '@/lib/utils';
 
 function InviteContent() {
   const params = useParams();
   const inviteCode = params.code as string;
-  const { isAuthenticated, isLoading } = useAuth();
-  const { refreshRooms, setActiveRoom } = useChat();
+  const { user, isAuthenticated, isLoading } = useAuth();
+  const { joinedRoom } = useChat();
   const router = useRouter();
 
   const [isJoining, setIsJoining] = useState(false);
@@ -23,91 +27,68 @@ function InviteContent() {
       setIsJoining(true);
       setError('');
       const res = await api.post(`/chats/join/${inviteCode}`);
-      const joinedRoom = res.data.data;
-      await refreshRooms();
-      setActiveRoom(joinedRoom);
+      await joinedRoom(res.data.data);
       router.push('/chat');
-    } catch (err: any) {
-      setError(err.response?.data?.message || 'Invalid or expired invite link.');
-    } finally {
+    } catch (err) {
+      setError(getErrorMessage(err, 'This invite link is invalid or has expired.'));
       setIsJoining(false);
     }
   };
 
   if (isLoading) {
     return (
-      <div className="flex-1 flex items-center justify-center min-h-screen bg-neutral-50 dark:bg-neutral-950">
-        <Loader2 className="w-6 h-6 animate-spin text-blue-600" />
+      <div className="flex-1 flex items-center justify-center min-h-dvh">
+        <Loader2 className="w-5 h-5 animate-spin text-subtle" aria-label="Loading" />
       </div>
     );
   }
 
+  const code = encodeURIComponent(inviteCode);
+
   return (
-    <div className="flex-1 flex flex-col justify-center items-center px-4 py-12 min-h-screen bg-neutral-50 dark:bg-neutral-950">
-      <div className="w-full max-w-md bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-3xl p-8 shadow-xl text-center">
-        <div className="w-14 h-14 rounded-2xl bg-blue-600 text-white flex items-center justify-center mx-auto mb-4 shadow-md shadow-blue-500/20">
-          <Users className="w-7 h-7" />
-        </div>
-
-        <h1 className="text-xl font-bold text-neutral-900 dark:text-neutral-100 mb-2">
-          Group Invitation
-        </h1>
-        <p className="text-xs text-neutral-500 dark:text-neutral-400 mb-6">
-          You&apos;ve been invited to join a group chat on CEngine directly in your browser.
-        </p>
-
-        {error && (
-          <div className="mb-5 p-3 rounded-xl bg-red-500/10 border border-red-500/20 text-xs text-red-600 dark:text-red-400">
-            {error}
-          </div>
-        )}
-
+    <AuthShell
+      title="You've been invited to a group"
+      subtitle={
+        isAuthenticated
+          ? `You'll join as ${user?.displayName}.`
+          : 'Create a free account or log in to join the conversation.'
+      }
+    >
+      <div className="space-y-3">
+        {error && <Alert>{error}</Alert>}
         {isAuthenticated ? (
-          <button
-            onClick={handleJoin}
-            disabled={isJoining}
-            className="w-full flex items-center justify-center space-x-2 py-3 px-4 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-medium text-xs uppercase tracking-wider transition-colors disabled:opacity-50 shadow-md shadow-blue-500/20"
-          >
-            {isJoining ? (
-              <Loader2 className="w-4 h-4 animate-spin" />
-            ) : (
-              <>
-                <span>Join Group Now</span>
-                <ArrowRight className="w-4 h-4" />
-              </>
-            )}
-          </button>
+          <>
+            <Button size="lg" className="w-full" onClick={handleJoin} loading={isJoining}>
+              Join group
+            </Button>
+            <Link href="/chat" className={buttonClass('ghost', 'lg', 'w-full')}>
+              Not now
+            </Link>
+          </>
         ) : (
-          <div className="space-y-3">
+          <>
             <Link
-              href={`/register?invite=${inviteCode}`}
-              className="w-full flex items-center justify-center space-x-2 py-3 px-4 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-medium text-xs uppercase tracking-wider transition-colors shadow-md shadow-blue-500/20"
+              href={`/register?invite=${code}`}
+              className={buttonClass('primary', 'lg', 'w-full')}
             >
-              <span>Create Account & Join</span>
-              <ArrowRight className="w-4 h-4" />
+              Create account and join
             </Link>
             <Link
-              href={`/login?invite=${inviteCode}`}
-              className="w-full block py-2.5 px-4 rounded-xl border border-neutral-200 dark:border-neutral-700 text-neutral-700 dark:text-neutral-300 text-xs font-medium hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors"
+              href={`/login?invite=${code}`}
+              className={buttonClass('secondary', 'lg', 'w-full')}
             >
-              Log in to existing account
+              I already have an account
             </Link>
-          </div>
+          </>
         )}
       </div>
-    </div>
+    </AuthShell>
   );
 }
 
 export default function InviteLandingPage() {
   return (
-    <Suspense
-      fallback={
-        <div className="flex-1 flex items-center justify-center min-h-screen bg-neutral-50 dark:bg-neutral-950">
-          <Loader2 className="w-6 h-6 animate-spin text-blue-600" />
-        </div>
-      }
-    >
+    <Suspense>
       <InviteContent />
     </Suspense>
   );

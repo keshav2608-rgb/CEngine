@@ -1,225 +1,342 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
-  MessageSquarePlus,
+  SquarePen,
   Users,
   Search,
   Settings,
   LogOut,
-  Check,
-  CheckCheck,
+  BellOff,
+  Paperclip,
+  CalendarClock,
+  MonitorDown,
 } from 'lucide-react';
 import { Avatar } from '@/components/ui/Avatar';
+import { IconButton } from '@/components/ui/Button';
 import { useAuth } from '@/lib/auth-context';
-import { useChat, Room } from '@/lib/chat-context';
-import { formatChatTimestamp } from '@/lib/utils';
-import { NewChatModal } from '@/components/modals/NewChatModal';
-import { CreateGroupModal } from '@/components/modals/CreateGroupModal';
-import { ProfileModal } from '@/components/modals/ProfileModal';
+import { useChat, Room, messagePreviewText } from '@/lib/chat-context';
+import { useDrafts, usePreferences } from '@/lib/preferences';
+import { useScheduled } from '@/lib/scheduled';
+import { usePwa } from '@/lib/pwa';
+import { useSignOut } from '@/lib/sign-out';
+import { StatusTicks, deliveryState } from './StatusTicks';
+import { cn, formatChatTimestamp, isMac } from '@/lib/utils';
 
-export function Sidebar() {
-  const { user, logout } = useAuth();
-  const { rooms, activeRoom, setActiveRoom, onlineMap, isLoadingRooms } = useChat();
-  const [searchQuery, setSearchQuery] = useState('');
-  const [isNewChatOpen, setIsNewChatOpen] = useState(false);
-  const [isCreateGroupOpen, setIsCreateGroupOpen] = useState(false);
-  const [isProfileOpen, setIsProfileOpen] = useState(false);
+interface SidebarProps {
+  onNewChat: () => void;
+  onNewGroup: () => void;
+  onOpenSettings: () => void;
+  onOpenSearch: () => void;
+}
 
-  // Filter rooms based on query
-  const filteredRooms = rooms.filter((room) => {
-    if (!searchQuery.trim()) return true;
-    const query = searchQuery.toLowerCase();
-    if (room.isGroup) {
-      return room.name?.toLowerCase().includes(query);
-    }
-    const peer = room.members.find((m) => m.userId !== user?.id);
-    return peer?.user.displayName.toLowerCase().includes(query);
-  });
+type Filter = 'all' | 'unread';
 
-  const getRoomTitle = (room: Room) => {
-    if (room.isGroup) return room.name || 'Group';
-    const peer = room.members.find((m) => m.userId !== user?.id);
-    return peer?.user.displayName || 'Direct Chat';
-  };
+export function getRoomTitle(room: Room, myId?: string) {
+  if (room.isGroup) return room.name || 'Group';
+  return room.members.find((m) => m.userId !== myId)?.user.displayName || 'Direct message';
+}
 
-  const getRoomAvatar = (room: Room) => {
-    if (room.isGroup) {
-      return {
-        src: room.avatarUrl,
-        name: room.name,
-        isOnline: false,
-        showPresence: false,
-      };
-    }
-    const peer = room.members.find((m) => m.userId !== user?.id);
-    const isPeerOnline = peer ? onlineMap[peer.userId] ?? peer.user.isOnline ?? false : false;
-    return {
-      src: peer?.user.avatarUrl,
-      name: peer?.user.displayName,
-      isOnline: isPeerOnline,
-      showPresence: true,
-    };
-  };
+export function Sidebar({ onNewChat, onNewGroup, onOpenSettings, onOpenSearch }: SidebarProps) {
+  const { user } = useAuth();
+  const signOut = useSignOut();
+  const { rooms, activeRoom, setActiveRoom, onlineMap, isLoadingRooms, typingByRoom } = useChat();
+  const { prefs } = usePreferences();
+  const [filter, setFilter] = useState<Filter>('all');
+  const { byRoom: scheduledByRoom } = useScheduled();
+  const pwa = usePwa();
+  const drafts = useDrafts(useMemo(() => rooms.map((r) => r.id), [rooms]));
+
+  const unreadRooms = rooms.filter((r) => r.unreadCount > 0).length;
+  const visibleRooms =
+    filter === 'unread' ? rooms.filter((r) => r.unreadCount > 0 || r.id === activeRoom?.id) : rooms;
 
   return (
-    <>
-      <aside className="w-full md:w-80 lg:w-96 h-full flex flex-col bg-white dark:bg-neutral-900 border-r border-neutral-200 dark:border-neutral-800 select-none">
-        {/* User Profile & Navigation Header */}
-        <div className="p-3.5 border-b border-neutral-200 dark:border-neutral-800 flex items-center justify-between">
+    <aside className="w-full md:w-[320px] lg:w-[340px] h-full flex flex-col bg-surface border-r border-line">
+      {/* Header */}
+      <div className="h-14 shrink-0 flex items-center justify-between pl-4 pr-2">
+        <h1 className="text-[15px] font-semibold text-fg">Messages</h1>
+        <div className="flex items-center gap-0.5">
+          <IconButton label="New group" onClick={onNewGroup}>
+            <Users className="w-[18px] h-[18px]" />
+          </IconButton>
+          <IconButton label="New message" onClick={onNewChat}>
+            <SquarePen className="w-[18px] h-[18px]" />
+          </IconButton>
+        </div>
+      </div>
+
+      {/* Search trigger */}
+      <div className="px-3 pb-2">
+        <button
+          onClick={onOpenSearch}
+          className="w-full h-9 flex items-center gap-2 px-3 rounded-md border border-line bg-surface-2 text-[13px] text-subtle hover:border-line-strong transition-colors"
+        >
+          <Search className="w-4 h-4" />
+          <span className="flex-1 text-left">Search or jump to…</span>
+          <kbd className="hidden sm:inline font-sans text-[11px] px-1.5 py-0.5 rounded border border-line bg-surface">
+            {isMac ? '⌘' : 'Ctrl'} K
+          </kbd>
+        </button>
+      </div>
+
+      {/* Filters */}
+      <div className="flex gap-1 px-3 pb-2" role="tablist" aria-label="Filter conversations">
+        {(['all', 'unread'] as Filter[]).map((f) => (
           <button
-            onClick={() => setIsProfileOpen(true)}
-            className="flex items-center space-x-2.5 p-1 rounded-xl hover:bg-neutral-100 dark:hover:bg-neutral-800/60 transition-colors text-left group"
+            key={f}
+            role="tab"
+            aria-selected={filter === f}
+            onClick={() => setFilter(f)}
+            className={cn(
+              'h-7 px-2.5 rounded-md text-[13px] font-medium transition-colors',
+              filter === f ? 'bg-surface-3 text-fg' : 'text-muted hover:text-fg hover:bg-surface-2'
+            )}
           >
-            <Avatar
-              src={user?.avatarUrl}
-              name={user?.displayName}
-              size="sm"
-              showPresence
-              isOnline={true}
-            />
-            <div className="min-w-0 pr-1">
-              <h3 className="text-xs font-semibold text-neutral-900 dark:text-neutral-100 truncate group-hover:text-blue-600 transition-colors">
-                {user?.displayName}
-              </h3>
-              <p className="text-[11px] text-neutral-500 dark:text-neutral-400 truncate">
-                {user?.status || 'Online'}
-              </p>
-            </div>
+            {f === 'all' ? 'All' : 'Unread'}
+            {f === 'unread' && unreadRooms > 0 && (
+              <span className="ml-1 text-muted">{unreadRooms}</span>
+            )}
           </button>
+        ))}
+      </div>
 
-          <div className="flex items-center space-x-1">
-            <button
-              onClick={() => setIsNewChatOpen(true)}
-              title="New direct chat"
-              className="p-2 text-neutral-600 dark:text-neutral-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-neutral-100 dark:hover:bg-neutral-800 rounded-xl transition-colors"
-            >
-              <MessageSquarePlus className="w-4 h-4" />
-            </button>
-            <button
-              onClick={() => setIsCreateGroupOpen(true)}
-              title="Create group"
-              className="p-2 text-neutral-600 dark:text-neutral-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-neutral-100 dark:hover:bg-neutral-800 rounded-xl transition-colors"
-            >
-              <Users className="w-4 h-4" />
-            </button>
-            <button
-              onClick={() => setIsProfileOpen(true)}
-              title="Settings"
-              className="p-2 text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-neutral-100 hover:bg-neutral-100 dark:hover:bg-neutral-800 rounded-xl transition-colors"
-            >
-              <Settings className="w-4 h-4" />
-            </button>
-            <button
-              onClick={logout}
-              title="Log out"
-              className="p-2 text-neutral-400 hover:text-red-500 hover:bg-neutral-100 dark:hover:bg-neutral-800 rounded-xl transition-colors"
-            >
-              <LogOut className="w-4 h-4" />
-            </button>
-          </div>
-        </div>
-
-        {/* Search Bar */}
-        <div className="p-3">
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-neutral-400" />
-            <input
-              type="text"
-              placeholder="Search conversations..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-9 pr-3.5 py-2 rounded-xl border border-neutral-200 dark:border-neutral-700 bg-neutral-50 dark:bg-neutral-800/50 text-xs text-neutral-900 dark:text-neutral-100 focus:outline-hidden focus:ring-2 focus:ring-blue-500 transition-all placeholder:text-neutral-400"
-            />
-          </div>
-        </div>
-
-        {/* Conversation List */}
-        <div className="flex-1 overflow-y-auto px-2 space-y-1">
-          {isLoadingRooms && rooms.length === 0 ? (
-            <div className="py-8 text-center text-xs text-neutral-400">
-              Loading conversations...
-            </div>
-          ) : filteredRooms.length > 0 ? (
-            filteredRooms.map((room) => {
-              const title = getRoomTitle(room);
-              const avatarProps = getRoomAvatar(room);
-              const isActive = activeRoom?.id === room.id;
-              const lastMsg = room.lastMessage;
-
-              return (
+      {/* Conversation list */}
+      <nav className="flex-1 overflow-y-auto px-2 pb-2" aria-label="Conversations">
+        {isLoadingRooms && rooms.length === 0 ? (
+          <RoomSkeleton />
+        ) : visibleRooms.length > 0 ? (
+          <ul className="space-y-px">
+            {visibleRooms.map((room) => (
+              <li key={room.id}>
+                <RoomRow
+                  room={room}
+                  myId={user?.id}
+                  isActive={activeRoom?.id === room.id}
+                  isMuted={prefs.mutedRooms.includes(room.id)}
+                  typing={typingByRoom[room.id]}
+                  draft={activeRoom?.id === room.id ? undefined : drafts[room.id]}
+                  scheduledCount={scheduledByRoom[room.id]?.length ?? 0}
+                  isPeerOnline={(() => {
+                    if (room.isGroup) return false;
+                    const peer = room.members.find((m) => m.userId !== user?.id);
+                    return peer ? (onlineMap[peer.userId] ?? peer.user.isOnline ?? false) : false;
+                  })()}
+                  onSelect={() => setActiveRoom(room)}
+                />
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <div className="px-4 py-10 text-center">
+            {filter === 'unread' ? (
+              <p className="text-[13px] text-muted">You&apos;re all caught up.</p>
+            ) : (
+              <>
+                <p className="text-sm font-medium text-fg">No conversations yet</p>
+                <p className="text-[13px] text-muted mt-1 mb-4">
+                  Find someone by name or email to start chatting.
+                </p>
                 <button
-                  key={room.id}
-                  onClick={() => setActiveRoom(room)}
-                  className={`w-full flex items-center space-x-3 p-2.5 rounded-2xl text-left transition-all ${
-                    isActive
-                      ? 'bg-blue-50 dark:bg-blue-950/40 text-blue-900 dark:text-blue-100'
-                      : 'hover:bg-neutral-100 dark:hover:bg-neutral-800/60 text-neutral-800 dark:text-neutral-200'
-                  }`}
+                  onClick={onNewChat}
+                  className="h-8 px-3 rounded-md bg-accent text-accent-fg text-[13px] font-medium hover:bg-accent-hover"
                 >
-                  <Avatar
-                    src={avatarProps.src}
-                    name={avatarProps.name}
-                    size="md"
-                    showPresence={avatarProps.showPresence}
-                    isOnline={avatarProps.isOnline}
-                  />
-
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center justify-between mb-0.5">
-                      <span className="text-xs font-semibold truncate">
-                        {title}
-                      </span>
-                      {lastMsg && (
-                        <span className="text-[10px] text-neutral-400 dark:text-neutral-500 flex-shrink-0 ml-1">
-                          {formatChatTimestamp(lastMsg.createdAt)}
-                        </span>
-                      )}
-                    </div>
-
-                    <div className="flex items-center justify-between">
-                      <p className="text-xs text-neutral-500 dark:text-neutral-400 truncate pr-2">
-                        {lastMsg ? (
-                          lastMsg.isDeleted ? (
-                            <span className="italic text-neutral-400">Message deleted</span>
-                          ) : (
-                            lastMsg.content || (lastMsg.attachments?.length ? '📷 Attachment' : '...')
-                          )
-                        ) : (
-                          <span className="text-neutral-400 italic">No messages yet</span>
-                        )}
-                      </p>
-
-                      {room.unreadCount > 0 && (
-                        <span className="flex-shrink-0 min-w-4 h-4 px-1 rounded-full bg-blue-600 text-[10px] font-bold text-white flex items-center justify-center">
-                          {room.unreadCount > 99 ? '99+' : room.unreadCount}
-                        </span>
-                      )}
-                    </div>
-                  </div>
+                  New message
                 </button>
-              );
-            })
-          ) : (
-            <div className="py-12 px-4 text-center">
-              <p className="text-xs text-neutral-400 mb-3">
-                {searchQuery ? 'No chats found' : 'No chats yet'}
-              </p>
-              <button
-                onClick={() => setIsNewChatOpen(true)}
-                className="px-3.5 py-1.5 text-xs font-medium rounded-xl bg-blue-600 text-white hover:bg-blue-700 transition-colors shadow-xs"
-              >
-                Start a Conversation
-              </button>
-            </div>
-          )}
-        </div>
-      </aside>
+              </>
+            )}
+          </div>
+        )}
+      </nav>
 
-      {/* Modals */}
-      <NewChatModal isOpen={isNewChatOpen} onClose={() => setIsNewChatOpen(false)} />
-      <CreateGroupModal isOpen={isCreateGroupOpen} onClose={() => setIsCreateGroupOpen(false)} />
-      <ProfileModal isOpen={isProfileOpen} onClose={() => setIsProfileOpen(false)} />
-    </>
+      {/* Current user */}
+      <div className="shrink-0 border-t border-line p-2 flex items-center gap-1">
+        <button
+          onClick={onOpenSettings}
+          className="flex-1 min-w-0 flex items-center gap-2.5 p-1.5 rounded-md hover:bg-surface-2 text-left"
+        >
+          <Avatar src={user?.avatarUrl} name={user?.displayName} size="sm" showPresence isOnline />
+          <span className="min-w-0">
+            <span className="block text-[13px] font-medium text-fg truncate">
+              {user?.displayName}
+            </span>
+            <span className="block text-[12px] text-muted truncate">
+              {user?.status || 'Set a status'}
+            </span>
+          </span>
+        </button>
+        {pwa.canInstall && !pwa.isInstalled && (
+          <IconButton label="Install app" onClick={() => pwa.install()}>
+            <MonitorDown className="w-[18px] h-[18px]" />
+          </IconButton>
+        )}
+        <IconButton label="Settings" onClick={onOpenSettings}>
+          <Settings className="w-[18px] h-[18px]" />
+        </IconButton>
+        <IconButton label="Log out" onClick={signOut}>
+          <LogOut className="w-[18px] h-[18px]" />
+        </IconButton>
+      </div>
+    </aside>
+  );
+}
+
+function RoomRow({
+  room,
+  myId,
+  isActive,
+  isMuted,
+  isPeerOnline,
+  typing,
+  draft,
+  scheduledCount,
+  onSelect,
+}: {
+  room: Room;
+  myId?: string;
+  isActive: boolean;
+  isMuted: boolean;
+  isPeerOnline: boolean;
+  typing?: string[];
+  draft?: string;
+  scheduledCount: number;
+  onSelect: () => void;
+}) {
+  const title = getRoomTitle(room, myId);
+  const peer = !room.isGroup ? room.members.find((m) => m.userId !== myId) : null;
+  const lastMsg = room.lastMessage;
+  const hasUnread = room.unreadCount > 0 && !isActive;
+
+  let preview: React.ReactNode;
+  if (typing?.length) {
+    preview = (
+      <span className="text-accent">{room.isGroup ? `${typing[0]} is typing…` : 'typing…'}</span>
+    );
+  } else if (draft) {
+    preview = (
+      <>
+        <span className="text-danger font-medium">Draft: </span>
+        {draft}
+      </>
+    );
+  } else if (!lastMsg) {
+    preview = <span className="text-subtle">No messages yet</span>;
+  } else if (lastMsg.isDeleted) {
+    preview = <span className="italic">Message deleted</span>;
+  } else {
+    const isOwnLast = lastMsg.senderId === myId;
+    const author = isOwnLast
+      ? ''
+      : room.isGroup
+        ? `${lastMsg.sender.displayName.split(' ')[0]}: `
+        : '';
+    const body =
+      lastMsg.content || lastMsg.sticker || (lastMsg.e2eeState && lastMsg.e2eeState !== 'ok') ? (
+        messagePreviewText(lastMsg)
+      ) : lastMsg.attachments?.length ? (
+        <span className="inline-flex items-center gap-1 align-bottom">
+          <Paperclip className="w-3 h-3" />
+          {lastMsg.attachments.length > 1
+            ? `${lastMsg.attachments.length} attachments`
+            : lastMsg.attachments[0].fileName}
+        </span>
+      ) : (
+        ''
+      );
+    preview = (
+      <>
+        {isOwnLast && (
+          <span className="inline-flex align-[-3px] mr-1">
+            <StatusTicks {...deliveryState(lastMsg, Math.max(room.members.length - 1, 1))} />
+          </span>
+        )}
+        {author}
+        {body}
+      </>
+    );
+  }
+
+  return (
+    <button
+      onClick={onSelect}
+      aria-current={isActive ? 'true' : undefined}
+      className={cn(
+        'w-full flex items-center gap-3 px-2 py-2 rounded-md text-left transition-colors',
+        isActive ? 'bg-accent-soft' : 'hover:bg-surface-2',
+        isMuted && !isActive && 'opacity-70'
+      )}
+    >
+      <Avatar
+        src={room.isGroup ? room.avatarUrl : peer?.user.avatarUrl}
+        name={title}
+        size="md"
+        showPresence={!room.isGroup}
+        isOnline={isPeerOnline}
+      />
+      <span className="flex-1 min-w-0">
+        <span className="flex items-baseline justify-between gap-2">
+          <span
+            className={cn(
+              'truncate text-[14px]',
+              hasUnread ? 'font-semibold text-fg' : 'font-medium text-fg',
+              isActive && 'text-accent-soft-fg'
+            )}
+          >
+            {title}
+          </span>
+          {lastMsg && (
+            <span
+              className={cn(
+                'shrink-0 text-[11px]',
+                hasUnread && !isMuted ? 'text-accent font-medium' : 'text-subtle'
+              )}
+            >
+              {formatChatTimestamp(lastMsg.createdAt)}
+            </span>
+          )}
+        </span>
+        <span className="flex items-center justify-between gap-2 mt-0.5">
+          <span className={cn('truncate text-[13px]', hasUnread ? 'text-fg' : 'text-muted')}>
+            {preview}
+          </span>
+          <span className="flex items-center gap-1 shrink-0">
+            {scheduledCount > 0 && (
+              <CalendarClock
+                className="w-3.5 h-3.5 text-subtle"
+                aria-label={`${scheduledCount} scheduled`}
+              />
+            )}
+            {isMuted && <BellOff className="w-3.5 h-3.5 text-subtle" aria-label="Muted" />}
+            {hasUnread && (
+              <span
+                className={cn(
+                  'min-w-[18px] h-[18px] px-1.5 rounded-full text-[11px] font-semibold inline-flex items-center justify-center',
+                  isMuted ? 'bg-surface-3 text-muted' : 'bg-accent text-accent-fg'
+                )}
+                aria-label={`${room.unreadCount} unread`}
+              >
+                {room.unreadCount > 99 ? '99+' : room.unreadCount}
+              </span>
+            )}
+          </span>
+        </span>
+      </span>
+    </button>
+  );
+}
+
+function RoomSkeleton() {
+  return (
+    <div className="space-y-1 animate-pulse" aria-label="Loading conversations">
+      {Array.from({ length: 6 }).map((_, i) => (
+        <div key={i} className="flex items-center gap-3 px-2 py-2">
+          <div className="w-10 h-10 rounded-full bg-surface-3" />
+          <div className="flex-1 space-y-2">
+            <div className="h-3 w-1/2 rounded bg-surface-3" />
+            <div className="h-3 w-3/4 rounded bg-surface-2" />
+          </div>
+        </div>
+      ))}
+    </div>
   );
 }

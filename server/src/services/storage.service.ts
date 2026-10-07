@@ -16,6 +16,8 @@ const ALLOWED_MIME_TYPES = new Set([
   'application/msword',
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
   'application/zip',
+  // End-to-end encrypted files: the real type is inside the encrypted message
+  'application/octet-stream',
 ]);
 
 export class StorageService {

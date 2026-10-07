@@ -2,6 +2,16 @@ import { Request, Response, NextFunction } from 'express';
 import { AuthService } from '../services/auth.service.js';
 import { AppError } from '../utils/errors.js';
 
+// In production the client (e.g. Vercel) and API (e.g. Render) live on different sites, so the
+// refresh cookie must be SameSite=None (which browsers only accept together with Secure).
+const isProd = process.env.NODE_ENV === 'production';
+const clearRefreshCookieOptions = {
+  httpOnly: true,
+  secure: isProd,
+  sameSite: isProd ? ('none' as const) : ('lax' as const),
+};
+const refreshCookieOptions = { ...clearRefreshCookieOptions, maxAge: 7 * 24 * 60 * 60 * 1000 };
+
 export class AuthController {
   static async register(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
@@ -9,12 +19,7 @@ export class AuthController {
       const result = await AuthService.register(email, password, displayName);
 
       // Set refresh token in httpOnly cookie
-      res.cookie('refreshToken', result.refreshToken, {
-        httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
-        sameSite: 'lax',
-        maxAge: 7 * 24 * 60 * 60 * 1000,
-      });
+      res.cookie('refreshToken', result.refreshToken, refreshCookieOptions);
 
       res.status(201).json({
         success: true,
@@ -31,12 +36,7 @@ export class AuthController {
       const { email, password } = req.body;
       const result = await AuthService.login(email, password);
 
-      res.cookie('refreshToken', result.refreshToken, {
-        httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
-        sameSite: 'lax',
-        maxAge: 7 * 24 * 60 * 60 * 1000,
-      });
+      res.cookie('refreshToken', result.refreshToken, refreshCookieOptions);
 
       res.json({
         success: true,
@@ -56,12 +56,7 @@ export class AuthController {
 
       const tokens = await AuthService.refresh(refreshToken);
 
-      res.cookie('refreshToken', tokens.refreshToken, {
-        httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
-        sameSite: 'lax',
-        maxAge: 7 * 24 * 60 * 60 * 1000,
-      });
+      res.cookie('refreshToken', tokens.refreshToken, refreshCookieOptions);
 
       res.json({
         success: true,
@@ -79,7 +74,7 @@ export class AuthController {
         await AuthService.logout(refreshToken);
       }
 
-      res.clearCookie('refreshToken');
+      res.clearCookie('refreshToken', clearRefreshCookieOptions);
       res.json({
         success: true,
         message: 'Logged out successfully.',
@@ -154,12 +149,7 @@ export class AuthController {
         avatarUrl,
       });
 
-      res.cookie('refreshToken', result.refreshToken, {
-        httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
-        sameSite: 'lax',
-        maxAge: 7 * 24 * 60 * 60 * 1000,
-      });
+      res.cookie('refreshToken', result.refreshToken, refreshCookieOptions);
 
       res.json({
         success: true,
@@ -175,7 +165,7 @@ export class AuthController {
       const userId = req.user!.userId;
       await AuthService.deleteAccount(userId);
 
-      res.clearCookie('refreshToken');
+      res.clearCookie('refreshToken', clearRefreshCookieOptions);
       res.json({
         success: true,
         message: 'Your account and all associated data have been permanently deleted.',

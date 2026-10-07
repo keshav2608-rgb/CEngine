@@ -80,9 +80,46 @@ export function initSocketServer(httpServer: HttpServer): SocketIOServer {
       console.error(`Error loading rooms for socket ${socket.id}:`, err);
     }
 
-    // Explicit room join (e.g. after newly joining a group)
-    socket.on('room:join', (roomId: string) => {
-      socket.join(`room:${roomId}`);
+    // Messages sent while this user was offline have now reached a device: mark them delivered
+    MessageService.markDelivered(userId)
+      .then((updated) => {
+        for (const group of updated) {
+          io.to(`room:${group.roomId}`).emit('message:delivered', { ...group, userId });
+        }
+      })
+      .catch((err) => console.error(`Error marking deliveries for ${userId}:`, err));
+
+    // Explicit room join (e.g. after newly joining a group). Only members may subscribe.
+    socket.on('room:join', async (roomId: string) => {
+      if (typeof roomId !== 'string') return;
+      try {
+        const membership = await prisma.roomMember.findUnique({
+          where: { roomId_userId: { roomId, userId } },
+          select: { id: true },
+        });
+        if (membership) socket.join(`room:${roomId}`);
+      } catch (err) {
+        console.error(`Error joining room ${roomId} for socket ${socket.id}:`, err);
+      }
+    });
+
+    // After a room is created or joined, subscribe every member's open sockets to it
+    // and tell their clients to refresh the room list, so new chats arrive live.
+    socket.on('room:sync', async (roomId: string) => {
+      if (typeof roomId !== 'string') return;
+      try {
+        const members = await prisma.roomMember.findMany({
+          where: { roomId },
+          select: { userId: true },
+        });
+        if (!members.some((m) => m.userId === userId)) return;
+        for (const m of members) {
+          io.in(`user:${m.userId}`).socketsJoin(`room:${roomId}`);
+          if (m.userId !== userId) io.to(`user:${m.userId}`).emit('room:added', { roomId });
+        }
+      } catch (err) {
+        console.error(`Error syncing room ${roomId}:`, err);
+      }
     });
 
     socket.on('room:leave', (roomId: string) => {
@@ -100,23 +137,26 @@ export function initSocketServer(httpServer: HttpServer): SocketIOServer {
           replyToId?: string;
           attachments?: any[];
           metadata?: Record<string, unknown>;
+          e2ee?: unknown;
         },
         callback?: (res: { success: boolean; data?: any; error?: string }) => void
       ) => {
         try {
           const message = await MessageService.sendMessage(userId, data.roomId, {
             content: data.content,
-            messageType: data.messageType,
             replyToId: data.replyToId,
             attachments: data.attachments,
             metadata: data.metadata,
+            e2ee: data.e2ee,
           });
 
-          // Broadcast message to everyone in the room (including sender)
-          io.to(`room:${data.roomId}`).emit('message:new', message);
+          const { isDuplicate, ...stored } = message;
+          // Broadcast to everyone in the room (including sender). A retried send that was
+          // already stored was broadcast the first time, so it is only acknowledged.
+          if (!isDuplicate) io.to(`room:${data.roomId}`).emit('message:new', stored);
 
           if (callback) {
-            callback({ success: true, data: message });
+            callback({ success: true, data: stored });
           }
         } catch (err: any) {
           if (callback) {
@@ -129,13 +169,11 @@ export function initSocketServer(httpServer: HttpServer): SocketIOServer {
     // 5. Message Delivered Event
     socket.on('message:delivered', async (data: { roomId: string; messageIds: string[] }) => {
       try {
-        if (data.messageIds && data.messageIds.length > 0) {
-          await MessageService.markDelivered(userId, data.messageIds);
-          io.to(`room:${data.roomId}`).emit('message:delivered', {
-            roomId: data.roomId,
-            userId,
-            messageIds: data.messageIds,
-          });
+        if (!Array.isArray(data?.messageIds) || data.messageIds.length === 0) return;
+        // Only broadcast receipts that actually changed (and belong to this user)
+        const updated = await MessageService.markDelivered(userId, data.messageIds.slice(0, 200));
+        for (const group of updated) {
+          io.to(`room:${group.roomId}`).emit('message:delivered', { ...group, userId });
         }
       } catch (err) {
         console.error('Error handling message:delivered:', err);
@@ -156,23 +194,30 @@ export function initSocketServer(httpServer: HttpServer): SocketIOServer {
     });
 
     // 7. Message Edit Event
-    socket.on('message:edit', async (data: { messageId: string; roomId: string; content: string }, callback) => {
+    socket.on(
+      'message:edit',
+      async (data: { messageId: string; roomId: string; content?: string; e2ee?: unknown }, callback) => {
       try {
-        const updated = await MessageService.editMessage(data.messageId, userId, data.content);
-        io.to(`room:${data.roomId}`).emit('message:updated', updated);
+        const updated = await MessageService.editMessage(data.messageId, userId, {
+          content: data.content,
+          e2ee: data.e2ee,
+        });
+        // Broadcast to the message's real room, not whatever room id the client sent
+        io.to(`room:${updated.roomId}`).emit('message:updated', updated);
         if (callback) callback({ success: true, data: updated });
       } catch (err: any) {
         if (callback) callback({ success: false, error: err.message });
       }
-    });
+      }
+    );
 
     // 8. Message Delete Event
     socket.on('message:delete', async (data: { messageId: string; roomId: string }, callback) => {
       try {
         const deleted = await MessageService.deleteMessage(data.messageId, userId);
-        io.to(`room:${data.roomId}`).emit('message:deleted', {
+        io.to(`room:${deleted.roomId}`).emit('message:deleted', {
           messageId: data.messageId,
-          roomId: data.roomId,
+          roomId: deleted.roomId,
           deletedMessage: deleted,
         });
         if (callback) callback({ success: true });
@@ -211,6 +256,10 @@ export function initSocketServer(httpServer: HttpServer): SocketIOServer {
     socket.on('disconnect', async () => {
       await presenceService.userDisconnected(userId, socket.id);
     });
+
+    // All handlers are registered; events emitted before this point would have been dropped.
+    // Clients wait for this before flushing messages queued while offline.
+    socket.emit('session:ready');
   });
 
   return io;

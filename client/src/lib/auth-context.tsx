@@ -19,8 +19,13 @@ interface AuthContextType {
   accessToken: string | null;
   isLoading: boolean;
   isAuthenticated: boolean;
-  login: (email: string, password: string) => Promise<void>;
-  register: (email: string, password: string, displayName: string) => Promise<void>;
+  login: (email: string, password: string, redirectTo?: string) => Promise<void>;
+  register: (
+    email: string,
+    password: string,
+    displayName: string,
+    redirectTo?: string
+  ) => Promise<void>;
   logout: () => Promise<void>;
   updateProfile: (data: { displayName?: string; status?: string; avatarUrl?: string }) => Promise<void>;
   deleteAccount: () => Promise<void>;
@@ -66,7 +71,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     initAuth();
   }, []);
 
-  const login = async (email: string, password: string) => {
+  const login = async (email: string, password: string, redirectTo = '/chat') => {
     const res = await api.post('/auth/login', { email, password });
     const { token, accessToken: newAccessToken, user: userData } = res.data.data;
     const tokenToSave = newAccessToken || token;
@@ -75,10 +80,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUser(userData);
     localStorage.setItem('cengine_access_token', tokenToSave);
     localStorage.setItem('cengine_user', JSON.stringify(userData));
-    router.push('/chat');
+    router.push(redirectTo);
   };
 
-  const register = async (email: string, password: string, displayName: string) => {
+  const register = async (
+    email: string,
+    password: string,
+    displayName: string,
+    redirectTo = '/chat'
+  ) => {
     const res = await api.post('/auth/register', { email, password, displayName });
     const { accessToken: newAccessToken, user: userData } = res.data.data;
 
@@ -86,7 +96,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUser(userData);
     localStorage.setItem('cengine_access_token', newAccessToken);
     localStorage.setItem('cengine_user', JSON.stringify(userData));
-    router.push('/chat');
+    router.push(redirectTo);
   };
 
   const logout = async () => {

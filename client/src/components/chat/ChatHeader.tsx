@@ -1,93 +1,112 @@
 'use client';
 
 import React, { useState } from 'react';
-import { ArrowLeft, MoreVertical, Users, Info } from 'lucide-react';
+import { ArrowLeft, Bell, BellOff, PanelRight } from 'lucide-react';
 import { Avatar } from '@/components/ui/Avatar';
+import { IconButton } from '@/components/ui/Button';
 import { useChat } from '@/lib/chat-context';
 import { useAuth } from '@/lib/auth-context';
-import { GroupDetailsModal } from '@/components/modals/GroupDetailsModal';
+import { usePreferences } from '@/lib/preferences';
+import { useToast } from '@/components/ui/Toast';
+import { formatLastSeen } from '@/lib/utils';
+import { ConversationDetailsModal } from '@/components/modals/ConversationDetailsModal';
+import { DeviceChangeBanner, KeyChangeBanner } from './Encryption';
 
 export function ChatHeader() {
   const { user } = useAuth();
-  const { activeRoom, setActiveRoom, onlineMap } = useChat();
+  const { activeRoom, setActiveRoom, onlineMap, lastSeenMap, typingUsers } = useChat();
+  const { prefs, toggleMute } = usePreferences();
+  const { toast } = useToast();
   const [isDetailsOpen, setIsDetailsOpen] = useState(false);
 
   if (!activeRoom) return null;
 
   const isGroup = activeRoom.isGroup;
   const peer = !isGroup ? activeRoom.members.find((m) => m.userId !== user?.id) : null;
-  const isPeerOnline = peer ? onlineMap[peer.userId] ?? peer.user.isOnline ?? false : false;
+  const isPeerOnline = peer ? (onlineMap[peer.userId] ?? peer.user.isOnline ?? false) : false;
+  const isMuted = prefs.mutedRooms.includes(activeRoom.id);
 
-  const title = isGroup ? activeRoom.name : peer?.user.displayName || 'Direct Chat';
-  const subtitle = isGroup
-    ? `${activeRoom.members.length} members`
-    : isPeerOnline
-    ? 'Online'
-    : peer?.user.status || 'Offline';
+  const title = isGroup ? activeRoom.name || 'Group' : peer?.user.displayName || 'Direct message';
+  const onlineCount = isGroup
+    ? activeRoom.members.filter(
+        (m) => m.userId !== user?.id && (onlineMap[m.userId] ?? m.user.isOnline)
+      ).length
+    : 0;
 
-  const avatarSrc = isGroup ? activeRoom.avatarUrl : peer?.user.avatarUrl;
+  let subtitle: React.ReactNode;
+  if (typingUsers.length) {
+    subtitle = (
+      <span className="text-accent">{isGroup ? `${typingUsers[0]} is typing…` : 'typing…'}</span>
+    );
+  } else if (isGroup) {
+    subtitle = `${activeRoom.members.length} members${onlineCount ? ` · ${onlineCount} online` : ''}`;
+  } else if (isPeerOnline) {
+    subtitle = 'Online';
+  } else {
+    subtitle = formatLastSeen(peer ? (lastSeenMap[peer.userId] ?? peer.user.lastSeenAt) : null);
+  }
+
+  const onToggleMute = () => {
+    toggleMute(activeRoom.id);
+    toast(isMuted ? 'Notifications turned on' : 'Conversation muted. You won’t get notifications.');
+  };
 
   return (
     <>
-      <header className="h-16 px-4 border-b border-neutral-200 dark:border-neutral-800 bg-white/80 dark:bg-neutral-900/80 backdrop-blur-md flex items-center justify-between select-none z-10">
-        <div className="flex items-center space-x-3 min-w-0">
-          {/* Back button on small screens */}
-          <button
+      <header className="h-14 shrink-0 px-2 sm:px-4 border-b border-line bg-surface flex items-center justify-between gap-2">
+        <div className="flex items-center gap-1 min-w-0">
+          <IconButton
+            label="Back to conversations"
             onClick={() => setActiveRoom(null)}
-            className="md:hidden p-1.5 -ml-1 text-neutral-600 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800 rounded-xl"
-            title="Back to chats"
+            className="md:hidden"
           >
             <ArrowLeft className="w-5 h-5" />
-          </button>
+          </IconButton>
 
           <button
-            onClick={() => isGroup && setIsDetailsOpen(true)}
-            className="flex items-center space-x-3 min-w-0 text-left hover:opacity-85 transition-opacity"
+            onClick={() => setIsDetailsOpen(true)}
+            className="flex items-center gap-3 min-w-0 text-left rounded-md px-1.5 py-1 hover:bg-surface-2 transition-colors"
           >
             <Avatar
-              src={avatarSrc}
+              src={isGroup ? activeRoom.avatarUrl : peer?.user.avatarUrl}
               name={title}
-              size="md"
+              size="sm"
               showPresence={!isGroup}
               isOnline={isPeerOnline}
             />
             <div className="min-w-0">
-              <h2 className="text-sm font-semibold text-neutral-900 dark:text-neutral-100 truncate">
-                {title}
-              </h2>
-              <p
-                className={`text-xs truncate ${
-                  isPeerOnline && !isGroup
-                    ? 'text-emerald-500 font-medium'
-                    : 'text-neutral-500 dark:text-neutral-400'
-                }`}
-              >
-                {subtitle}
-              </p>
+              <h2 className="text-[14px] font-semibold text-fg truncate leading-tight">{title}</h2>
+              <p className="text-[12px] text-muted truncate leading-tight mt-0.5">{subtitle}</p>
             </div>
           </button>
         </div>
 
-        <div className="flex items-center space-x-1">
-          {isGroup && (
-            <button
-              onClick={() => setIsDetailsOpen(true)}
-              title="Group info & members"
-              className="p-2 text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-neutral-100 hover:bg-neutral-100 dark:hover:bg-neutral-800 rounded-xl transition-colors"
-            >
-              <Info className="w-4 h-4" />
-            </button>
-          )}
+        <div className="flex items-center gap-0.5 shrink-0">
+          <IconButton
+            label={isMuted ? 'Unmute conversation' : 'Mute conversation'}
+            onClick={onToggleMute}
+            active={isMuted}
+          >
+            {isMuted ? (
+              <BellOff className="w-[18px] h-[18px]" />
+            ) : (
+              <Bell className="w-[18px] h-[18px]" />
+            )}
+          </IconButton>
+          <IconButton label="Conversation details" onClick={() => setIsDetailsOpen(true)}>
+            <PanelRight className="w-[18px] h-[18px]" />
+          </IconButton>
         </div>
       </header>
 
-      {isGroup && (
-        <GroupDetailsModal
-          isOpen={isDetailsOpen}
-          onClose={() => setIsDetailsOpen(false)}
-          room={activeRoom}
-        />
-      )}
+      <KeyChangeBanner room={activeRoom} onReview={() => setIsDetailsOpen(true)} />
+      <DeviceChangeBanner room={activeRoom} />
+
+      <ConversationDetailsModal
+        isOpen={isDetailsOpen}
+        onClose={() => setIsDetailsOpen(false)}
+        room={activeRoom}
+      />
     </>
   );
 }

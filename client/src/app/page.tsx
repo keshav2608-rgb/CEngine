@@ -10,21 +10,12 @@ export default function HomePage() {
   const router = useRouter();
 
   useEffect(() => {
-    if (!isLoading) {
-      if (isAuthenticated) {
-        router.replace('/chat');
-      } else {
-        router.replace('/login');
-      }
-    }
+    if (!isLoading) router.replace(isAuthenticated ? '/chat' : '/login');
   }, [isAuthenticated, isLoading, router]);
 
   return (
-    <div className="flex-1 flex flex-col items-center justify-center min-h-screen bg-neutral-50 dark:bg-neutral-950">
-      <div className="flex items-center space-x-3 text-blue-600">
-        <Loader2 className="w-6 h-6 animate-spin" />
-        <span className="text-sm font-medium">Loading CEngine...</span>
-      </div>
+    <div className="flex-1 flex items-center justify-center min-h-dvh">
+      <Loader2 className="w-5 h-5 animate-spin text-subtle" aria-label="Loading" />
     </div>
   );
 }

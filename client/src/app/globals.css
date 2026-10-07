@@ -1,26 +1,387 @@
-@import "tailwindcss";
+@import 'tailwindcss';
 
+/*
+ * Semantic design tokens. Components use these (bg-surface, text-fg, border-line…)
+ * instead of raw palette colors so themes stay consistent in one place.
+ *
+ * Theme:  <html data-theme="light|dark"> (absent = follow the system)
+ * Accent: <html data-accent="blue|violet|green|rose|amber|teal">
+ * Dark theme uses soft greys rather than pure black to reduce glare.
+ */
+
+/* ---------------------------------------------------------------- Accents */
+/* Each accent defines a light (-l-) and dark (-d-) variant; the theme picks one. */
+:root,
+[data-accent='blue'] {
+  --accent-l: #3355d6;
+  --accent-l-hover: #2a48bd;
+  --accent-l-soft: #edf1fd;
+  --accent-l-soft-fg: #2a48bd;
+  --accent-l-bubble: #dfe7fc;
+  --accent-d: #6b86f0;
+  --accent-d-hover: #8299f3;
+  --accent-d-soft: #232a45;
+  --accent-d-soft-fg: #a9b9f7;
+  --accent-d-bubble: #2a3460;
+}
+[data-accent='violet'] {
+  --accent-l: #6d44d4;
+  --accent-l-hover: #5c36bd;
+  --accent-l-soft: #f2edfd;
+  --accent-l-soft-fg: #5c36bd;
+  --accent-l-bubble: #e9e1fb;
+  --accent-d: #9d80f2;
+  --accent-d-hover: #b19af5;
+  --accent-d-soft: #2d2545;
+  --accent-d-soft-fg: #c8b8f8;
+  --accent-d-bubble: #372b5e;
+}
+[data-accent='green'] {
+  --accent-l: #18805a;
+  --accent-l-hover: #126c4b;
+  --accent-l-soft: #e8f6ef;
+  --accent-l-soft-fg: #126c4b;
+  --accent-l-bubble: #d9f2e4;
+  --accent-d: #4cc38f;
+  --accent-d-hover: #66cfa1;
+  --accent-d-soft: #1d3329;
+  --accent-d-soft-fg: #9fe0c1;
+  --accent-d-bubble: #1f4434;
+}
+[data-accent='rose'] {
+  --accent-l: #c4365f;
+  --accent-l-hover: #aa2b50;
+  --accent-l-soft: #fdeef2;
+  --accent-l-soft-fg: #aa2b50;
+  --accent-l-bubble: #fbe0e8;
+  --accent-d: #ee7395;
+  --accent-d-hover: #f28ba8;
+  --accent-d-soft: #41232d;
+  --accent-d-soft-fg: #f7b6c8;
+  --accent-d-bubble: #55283a;
+}
+[data-accent='amber'] {
+  --accent-l: #b45d00;
+  --accent-l-hover: #9a4f00;
+  --accent-l-soft: #fff4e5;
+  --accent-l-soft-fg: #8f4a00;
+  --accent-l-bubble: #fde9cc;
+  --accent-d: #f0a24a;
+  --accent-d-hover: #f4b46c;
+  --accent-d-soft: #3a2c1a;
+  --accent-d-soft-fg: #f6cb98;
+  --accent-d-bubble: #4a3519;
+}
+[data-accent='teal'] {
+  --accent-l: #0f7c8a;
+  --accent-l-hover: #0b6874;
+  --accent-l-soft: #e6f5f7;
+  --accent-l-soft-fg: #0b6874;
+  --accent-l-bubble: #d4eef2;
+  --accent-d: #45bccb;
+  --accent-d-hover: #62c9d6;
+  --accent-d-soft: #1a3338;
+  --accent-d-soft-fg: #9ddde6;
+  --accent-d-bubble: #1c434a;
+}
+
+/* ------------------------------------------------------------ Light theme */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --app: #f6f6f7;
+  --surface: #ffffff;
+  --surface-2: #f1f1f3;
+  --surface-3: #e7e7ea;
+  --line: #e2e2e6;
+  --line-strong: #cfcfd5;
+  --fg: #1a1a1e;
+  --muted: #62626b;
+  --subtle: #8e8e97;
+  --accent: var(--accent-l);
+  --accent-hover: var(--accent-l-hover);
+  --accent-fg: #ffffff;
+  --accent-soft: var(--accent-l-soft);
+  --accent-soft-fg: var(--accent-l-soft-fg);
+  --danger: #c93030;
+  --danger-soft: #fdeeee;
+  --success: #1f8a4c;
+  --warning: #a86200;
+  --warning-soft: #fff5e5;
+  --bubble-own: var(--accent-l-bubble);
+  --bubble-own-fg: #1a1a1e;
+  --bubble-other: #ffffff;
+  --highlight: #fff3c4;
+  /* Message status ticks: grey until read, then blue, whatever the accent */
+  --tick: #7d828c;
+  --tick-read: #1a8cff;
+  /* Wallpapers */
+  --wp-ink: rgba(26, 26, 30, 0.07);
+  --wp-sand: #f3ede2;
+  --wp-mint: #e4f1ea;
+  --wp-sky: #e3eef8;
+  --wp-blush: #f6e7ea;
+  --wp-slate: #e6e8ec;
+  --wp-image-dim: transparent;
+  color-scheme: light;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
+/* ------------------------------------------------------------- Dark theme */
+/* Same values twice: once for "follow system", once for an explicit dark choice. */
 @media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+  :root:not([data-theme='light']) {
+    --app: #141518;
+    --surface: #1b1c20;
+    --surface-2: #232429;
+    --surface-3: #2c2d33;
+    --line: #2d2e34;
+    --line-strong: #3b3c43;
+    --fg: #e6e6ea;
+    --muted: #a3a3ad;
+    --subtle: #7a7a84;
+    --accent: var(--accent-d);
+    --accent-hover: var(--accent-d-hover);
+    --accent-fg: #0f1220;
+    --accent-soft: var(--accent-d-soft);
+    --accent-soft-fg: var(--accent-d-soft-fg);
+    --danger: #ef6b6b;
+    --danger-soft: #3a1f22;
+    --success: #4cc17d;
+    --warning: #e5a54b;
+    --warning-soft: #352a19;
+    --bubble-own: var(--accent-d-bubble);
+    --bubble-own-fg: #eceef6;
+    --bubble-other: #232429;
+    --highlight: #4a4120;
+    --tick: #8f949e;
+    --tick-read: #53bdff;
+    --wp-ink: rgba(255, 255, 255, 0.05);
+    --wp-sand: #1f1c17;
+    --wp-mint: #161f1b;
+    --wp-sky: #151c24;
+    --wp-blush: #211819;
+    --wp-slate: #1a1c21;
+    --wp-image-dim: rgba(0, 0, 0, 0.45);
+    color-scheme: dark;
   }
 }
 
+:root[data-theme='dark'] {
+  --app: #141518;
+  --surface: #1b1c20;
+  --surface-2: #232429;
+  --surface-3: #2c2d33;
+  --line: #2d2e34;
+  --line-strong: #3b3c43;
+  --fg: #e6e6ea;
+  --muted: #a3a3ad;
+  --subtle: #7a7a84;
+  --accent: var(--accent-d);
+  --accent-hover: var(--accent-d-hover);
+  --accent-fg: #0f1220;
+  --accent-soft: var(--accent-d-soft);
+  --accent-soft-fg: var(--accent-d-soft-fg);
+  --danger: #ef6b6b;
+  --danger-soft: #3a1f22;
+  --success: #4cc17d;
+  --warning: #e5a54b;
+  --warning-soft: #352a19;
+  --bubble-own: var(--accent-d-bubble);
+  --bubble-own-fg: #eceef6;
+  --bubble-other: #232429;
+  --highlight: #4a4120;
+  --tick: #8f949e;
+  --tick-read: #53bdff;
+  --wp-ink: rgba(255, 255, 255, 0.05);
+  --wp-sand: #1f1c17;
+  --wp-mint: #161f1b;
+  --wp-sky: #151c24;
+  --wp-blush: #211819;
+  --wp-slate: #1a1c21;
+  --wp-image-dim: rgba(0, 0, 0, 0.45);
+  color-scheme: dark;
+}
+
+@theme inline {
+  --color-app: var(--app);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-fg: var(--fg);
+  --color-muted: var(--muted);
+  --color-subtle: var(--subtle);
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-fg: var(--accent-fg);
+  --color-accent-soft: var(--accent-soft);
+  --color-accent-soft-fg: var(--accent-soft-fg);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-warning-soft: var(--warning-soft);
+  --color-bubble-own: var(--bubble-own);
+  --color-bubble-own-fg: var(--bubble-own-fg);
+  --color-bubble-other: var(--bubble-other);
+  --color-highlight: var(--highlight);
+  --color-tick: var(--tick);
+  --color-tick-read: var(--tick-read);
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+}
+
+html,
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  height: 100%;
+}
+
+body {
+  background: var(--app);
+  color: var(--fg);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Applied briefly while switching theme/accent so the change fades instead of snapping */
+.theme-transition,
+.theme-transition * {
+  transition:
+    background-color 0.2s ease,
+    border-color 0.2s ease,
+    color 0.2s ease !important;
+}
+
+/* In the base layer so utilities like `outline-none` (e.g. the message box) can opt out */
+@layer base {
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+}
+
+/* Thin, unobtrusive scrollbars */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}
+
+/* --------------------------------------------------------------- Wallpapers */
+.wallpaper {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-color: var(--app);
+}
+.wallpaper[data-wp='dots'] {
+  background-image: radial-gradient(var(--wp-ink) 1.2px, transparent 1.2px);
+  background-size: 18px 18px;
+}
+.wallpaper[data-wp='grid'] {
+  background-image:
+    linear-gradient(var(--wp-ink) 1px, transparent 1px),
+    linear-gradient(90deg, var(--wp-ink) 1px, transparent 1px);
+  background-size: 28px 28px;
+}
+.wallpaper[data-wp='lines'] {
+  background-image: repeating-linear-gradient(135deg, var(--wp-ink) 0 1px, transparent 1px 14px);
+}
+.wallpaper[data-wp='doodle']::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-color: var(--wp-ink);
+  /* Line icons used as a repeating mask so the ink color follows the theme */
+  --doodle: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120' fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M14 18h26a6 6 0 0 1 6 6v12a6 6 0 0 1-6 6H26l-8 6v-6h-4a6 6 0 0 1-6-6V24a6 6 0 0 1 6-6z'/%3E%3Ccircle cx='88' cy='28' r='10'/%3E%3Cpath d='M84 28l3 3 6-6'/%3E%3Cpath d='M70 82l8-14 8 14z'/%3E%3Cpath d='M22 86c0-6 8-6 8 0 0-6 8-6 8 0 0 7-8 12-8 12s-8-5-8-12z'/%3E%3Cpath d='M96 78l6 6m0-6l-6 6'/%3E%3Ccircle cx='58' cy='56' r='2'/%3E%3C/svg%3E");
+  -webkit-mask-image: var(--doodle);
+  mask-image: var(--doodle);
+  -webkit-mask-size: 120px 120px;
+  mask-size: 120px 120px;
+}
+.wallpaper[data-wp='aurora'] {
+  background-image:
+    radial-gradient(at 0% 0%, var(--accent-soft) 0, transparent 55%),
+    radial-gradient(at 100% 100%, var(--accent-soft) 0, transparent 50%);
+}
+.wallpaper[data-wp='sand'] {
+  background-color: var(--wp-sand);
+}
+.wallpaper[data-wp='mint'] {
+  background-color: var(--wp-mint);
+}
+.wallpaper[data-wp='sky'] {
+  background-color: var(--wp-sky);
+}
+.wallpaper[data-wp='blush'] {
+  background-color: var(--wp-blush);
+}
+.wallpaper[data-wp='slate'] {
+  background-color: var(--wp-slate);
+}
+.wallpaper[data-wp='image'] {
+  background-size: cover;
+  background-position: center;
+}
+.wallpaper[data-wp='image']::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: var(--wp-image-dim);
+}
+
+/* ---------------------------------------------------------------- Motion */
+@keyframes flash-highlight {
+  0%,
+  40% {
+    background-color: var(--highlight);
+  }
+  100% {
+    background-color: transparent;
+  }
+}
+
+.flash-highlight {
+  animation: flash-highlight 1.6s ease-out;
+}
+
+@keyframes typing-dot {
+  0%,
+  60%,
+  100% {
+    opacity: 0.3;
+    transform: translateY(0);
+  }
+  30% {
+    opacity: 1;
+    transform: translateY(-2px);
+  }
+}
+
+.typing-dot {
+  animation: typing-dot 1.2s infinite ease-in-out;
+}
+
+@keyframes message-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.message-in {
+  animation: message-in 0.18s ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
 }

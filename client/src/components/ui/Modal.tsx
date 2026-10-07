@@ -1,15 +1,21 @@
 'use client';
 
-import React, { useEffect } from 'react';
+import React, { useEffect, useEffectEvent, useId, useRef } from 'react';
 import { X } from 'lucide-react';
+import { cn } from '@/lib/utils';
 
 interface ModalProps {
   isOpen: boolean;
   onClose: () => void;
   title: string;
+  description?: string;
   children: React.ReactNode;
+  footer?: React.ReactNode;
   maxWidth?: 'sm' | 'md' | 'lg' | 'xl';
 }
+
+/** Open dialogs, innermost last. Only the top one reacts to Esc/Tab. */
+const modalStack: symbol[] = [];
 
 const widthClasses = {
   sm: 'max-w-sm',
@@ -22,43 +28,107 @@ export function Modal({
   isOpen,
   onClose,
   title,
+  description,
   children,
+  footer,
   maxWidth = 'md',
 }: ModalProps) {
+  const titleId = useId();
+  const panelRef = useRef<HTMLDivElement>(null);
+  const handleClose = useEffectEvent(() => onClose());
+
   useEffect(() => {
+    if (!isOpen) return;
+    const previouslyFocused = document.activeElement as HTMLElement | null;
+    const token = Symbol('modal');
+    modalStack.push(token);
+
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      if (modalStack[modalStack.length - 1] !== token) return;
+      if (e.key === 'Escape') {
+        e.stopPropagation();
+        handleClose();
+      }
+      // Keep keyboard focus inside the dialog
+      if (e.key === 'Tab' && panelRef.current) {
+        const focusable = panelRef.current.querySelectorAll<HTMLElement>(
+          'button:not([disabled]), [href], input:not([disabled]), textarea:not([disabled]), select, [tabindex]:not([tabindex="-1"])'
+        );
+        if (focusable.length === 0) return;
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (e.shiftKey && document.activeElement === first) {
+          e.preventDefault();
+          last.focus();
+        } else if (!e.shiftKey && document.activeElement === last) {
+          e.preventDefault();
+          first.focus();
+        }
+      }
     };
-    if (isOpen) {
-      document.addEventListener('keydown', handleKeyDown);
-      document.body.style.overflow = 'hidden';
-    }
+
+    document.addEventListener('keydown', handleKeyDown, true);
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+
+    // Focus the first field (or the panel) when opening
+    requestAnimationFrame(() => {
+      const panel = panelRef.current;
+      if (!panel || panel.contains(document.activeElement)) return; // respect autoFocus
+      const target = panel.querySelector<HTMLElement>('input:not([disabled]), textarea') || panel;
+      target.focus();
+    });
+
     return () => {
-      document.removeEventListener('keydown', handleKeyDown);
-      document.body.style.overflow = 'unset';
+      modalStack.splice(modalStack.indexOf(token), 1);
+      document.removeEventListener('keydown', handleKeyDown, true);
+      document.body.style.overflow = prevOverflow;
+      previouslyFocused?.focus?.();
     };
-  }, [isOpen, onClose]);
+  }, [isOpen]);
 
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-200">
+    <div
+      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center sm:p-4 bg-black/40"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
       <div
-        className={`w-full ${widthClasses[maxWidth]} bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]`}
-        onClick={(e) => e.stopPropagation()}
+        ref={panelRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        tabIndex={-1}
+        className={cn(
+          'w-full bg-surface border border-line shadow-xl flex flex-col outline-none',
+          'rounded-t-xl sm:rounded-xl max-h-[92vh] sm:max-h-[85vh]',
+          widthClasses[maxWidth]
+        )}
       >
-        <div className="flex items-center justify-between px-6 py-4 border-b border-neutral-100 dark:border-neutral-800">
-          <h2 className="text-lg font-semibold text-neutral-900 dark:text-neutral-100">
-            {title}
-          </h2>
+        <div className="flex items-start justify-between gap-4 px-5 pt-4 pb-3">
+          <div className="min-w-0">
+            <h2 id={titleId} className="text-[15px] font-semibold text-fg">
+              {title}
+            </h2>
+            {description && <p className="text-[13px] text-muted mt-0.5">{description}</p>}
+          </div>
           <button
             onClick={onClose}
-            className="p-1 rounded-lg text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors"
+            aria-label="Close"
+            className="-mr-1.5 w-8 h-8 inline-flex items-center justify-center rounded-md text-subtle hover:text-fg hover:bg-surface-2"
           >
-            <X className="w-5 h-5" />
+            <X className="w-4 h-4" />
           </button>
         </div>
-        <div className="p-6 overflow-y-auto">{children}</div>
+        <div className="px-5 pb-5 overflow-y-auto">{children}</div>
+        {footer && (
+          <div className="flex items-center justify-end gap-2 px-5 py-3 border-t border-line">
+            {footer}
+          </div>
+        )}
       </div>
     </div>
   );

@@ -11,12 +11,19 @@ import { initSocketServer } from './sockets/socket.server.js';
 import { apiLimiter } from './middlewares/rate-limiter.middleware.js';
 import { errorHandler } from './middlewares/error.middleware.js';
 import apiRouter from './routes/index.js';
+import { ScheduledMessageService } from './services/scheduled-message.service.js';
+import { setIO } from './sockets/io-registry.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
 const httpServer = http.createServer(app);
+
+// Behind a hosting proxy (Render, Railway, ...) trust X-Forwarded-For so rate limits apply per client IP
+if (config.nodeEnv === 'production') {
+  app.set('trust proxy', 1);
+}
 
 // 1. Security Headers
 app.use(
@@ -39,7 +46,18 @@ app.use(express.urlencoded({ extended: true, limit: '15mb' }));
 app.use(cookieParser());
 
 // 4. Serve local static uploads if stored locally
-app.use('/uploads', express.static(path.resolve(process.cwd(), 'uploads')));
+// Uploaded files are untrusted: never let them run script on this origin (e.g. an SVG or HTML
+// file opened directly), never let browsers sniff them into something executable.
+app.use(
+  '/uploads',
+  (_req, res, next) => {
+    res.setHeader('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; sandbox");
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+    next();
+  },
+  express.static(path.resolve(process.cwd(), 'uploads'), { dotfiles: 'deny', index: false })
+);
 
 // 5. Rate Limiting on API
 app.use('/api', apiLimiter);
@@ -62,6 +80,8 @@ app.use(errorHandler);
 
 // 8. Initialize Socket.IO Server
 const io = initSocketServer(httpServer);
+setIO(io);
+ScheduledMessageService.start(io);
 
 // 9. Start Server
 async function startServer() {
